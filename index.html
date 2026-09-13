@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>変拍子シーケンサー (リアルサウンド & 超極短コード対応)</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #1a1a1a; color: #fff; }
+    .card { background: #2a2a2a; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+    .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 15px; }
+    .measure-block { border: 1px solid #444; padding: 12px; border-radius: 6px; margin-bottom: 12px; background: #333; }
+    .measure-header { display: flex; gap: 15px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .grid { display: grid; gap: 2px; margin-top: 8px; overflow-x: auto; padding-bottom: 5px; }
+    .row { display: flex; gap: 2px; align-items: center; }
+    .row-label { width: 110px; font-size: 11px; font-weight: bold; flex-shrink: 0; }
+    
+    .cell { width: 26px; height: 30px; background: #444; border: none; cursor: pointer; border-radius: 2px; flex-shrink: 0; }
+    .cell.active { background: #00adb5; }
+    .cell.current { border: 2px solid #ff414d; }
+    .cell.beat-start { margin-left: 4px; border-left: 2px solid #666; }
+
+    /* トラックごとの色分け */
+    .row-click .cell.active { background: #f39c12; }
+    .row-crash .cell.active, .row-ride .cell.active { background: #e67e22; }
+    .row-hihat .cell.active { background: #f1c40f; }
+    .row-hiTom .cell.active, .row-midTom .cell.active, .row-lowTom .cell.active { background: #9b59b6; }
+    .row-snare .cell.active { background: #e74c3c; }
+    .row-kick .cell.active { background: #2ecc71; }
+    
+    button { cursor: pointer; padding: 6px 12px; border-radius: 4px; border: none; background: #00adb5; color: #fff; }
+    button:hover { background: #00888e; }
+    .btn-secondary { background: #555; }
+    .btn-secondary:hover { background: #666; }
+    .btn-danger { background: #ff414d; }
+    .btn-danger:hover { background: #c0392b; }
+    select, input { padding: 5px; background: #444; color: #fff; border: 1px solid #555; border-radius: 4px; }
+    .code-input { width: 220px; font-family: monospace; }
+  </style>
+</head>
+<body>
+
+  <h1>変拍子 & サブディビジョンシーケンサー</h1>
+
+  <div class="card controls">
+    <button id="playBtn" style="font-size: 1.1em; padding: 8px 20px;">再生</button>
+    <label>メトロノーム音色: 
+      <select id="clickSound">
+        <option value="digital">デジタル（高音ビープ）</option>
+        <option value="wood">ウッド（木魚・クラベス風）</option>
+      </select>
+    </label>
+    <button id="addMeasureBtn">+ 小節を追加</button>
+  </div>
+
+  <!-- 極短コード共有操作カード -->
+  <div class="card">
+    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+      <button id="getShareCodeBtn">📋 共有コードを発行・コピー</button>
+      <button id="getShareUrlBtn" class="btn-secondary">🔗 共有URLをコピー</button>
+      <div style="margin-left: auto; display: flex; gap: 6px;">
+        <input type="text" id="importCodeInput" class="code-input" placeholder="短縮コードを貼り付け">
+        <button id="importCodeBtn" class="btn-secondary">復元</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="measuresContainer"></div>
+
+  <script>
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    const TRACK_KEYS = ['click', 'crash', 'ride', 'hihat', 'hiTom', 'midTom', 'lowTom', 'snare', 'kick'];
+    
+    let song = [
+      { bpm: 120, beats: 7, subBeat: 8, subdivision: 2, clickMute: false, drumPattern: createEmptyPattern(7, 2) },
+      { bpm: 140, beats: 5, subBeat: 4, subdivision: 4, clickMute: false, drumPattern: createEmptyPattern(5, 4) }
+    ];
+
+    let isPlaying = false;
+    let currentMeasureIdx = 0;
+    let currentStepIdx = 0;
+    let nextNoteTime = 0;
+    let timerID = null;
+
+    function createEmptyPattern(beats, subdivision) {
+      const totalSteps = beats * subdivision;
+      const pattern = {};
+      TRACK_KEYS.forEach(key => {
+        if (key === 'click') {
+          pattern[key] = new Array(totalSteps).fill(false);
+          for (let i = 0; i < totalSteps; i += subdivision) {
+            pattern[key][i] = true;
+          }
+        } else {
+          pattern[key] = new Array(totalSteps).fill(false);
+        }
+      });
+      return pattern;
+    }
+
+    // --- 音色合成 ---
+    function playSound(type, time, isAccent = false) {
+      if (type === 'click') {
+        const soundType = document.getElementById('clickSound').value;
+        if (soundType === 'digital') {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(isAccent ? 2400 : 1600, time);
+          gain.gain.setValueAtTime(0.3, time);
+          gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.03);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(time);
+          osc.stop(time + 0.03);
+        } else if (soundType === 'wood') {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(isAccent ? 1200 : 800, time);
+          osc.frequency.exponentialRampToValueAtTime(300, time + 0.02);
+          gain.gain.setValueAtTime(0.5, time);
+          gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.03);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(time);
+          osc.stop(time + 0.03);
+        }
+      }
+      else if (type === 'kick') {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.setValueAtTime(140, time);
+        osc.frequency.exponentialRampToValueAtTime(0.001, time + 0.15);
+        gain.gain.setValueAtTime(0.9, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(time);
+        osc.stop(time + 0.15);
+      }
+      else if (type === 'snare') {
+        const bufferSize = audioCtx.sampleRate * 0.12;
+        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const output = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+        
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.value = 800;
+
+        const noiseGain = audioCtx.createGain();
+        noiseGain.gain.setValueAtTime(0.5, time);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, time + 0.12);
+        
+        noise.connect(filter);
+        filter.connect(noiseGain);
+        noiseGain.connect(audioCtx.destination);
+        noise.start(time);
+      }
+      else if (type === 'hihat') {
+        const bufferSize = audioCtx.sampleRate * 0.04;
+        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const output = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+        
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.value = 7000;
+
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.25, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+        noise.start(time);
+      }
+      else if (type === 'hiTom' || type === 'midTom' || type === 'lowTom') {
+        const freqs = { hiTom: 220, midTom: 160, lowTom: 110 };
+        const startFreq = freqs[type];
+        
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(startFreq, time);
+        osc.frequency.exponentialRampToValueAtTime(startFreq * 0.4, time + 0.2);
+
+        gain.gain.setValueAtTime(0.7, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(time);
+        osc.stop(time + 0.2);
+      }
+      else if (type === 'crash') {
+        // --- リアルなクラッシュシンバル処理 ---
+        const bufferSize = audioCtx.sampleRate * 1.2;
+        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const output = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          output[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+
+        const noiseFilter = audioCtx.createBiquadFilter();
+        noiseFilter.type = 'highpass';
+        noiseFilter.frequency.value = 5500;
+
+        const noiseGain = audioCtx.createGain();
+        noiseGain.gain.setValueAtTime(0.4, time);
+        noiseGain.gain.exponentialRampToValueAtTime(0.0001, time + 1.2);
+
+        noise.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+        noiseGain.connect(audioCtx.destination);
+        noise.start(time);
+
+        const metalFreqs = [300, 470, 625, 830];
+        metalFreqs.forEach(freq => {
+          const osc = audioCtx.createOscillator();
+          const oscGain = audioCtx.createGain();
+          const oscFilter = audioCtx.createBiquadFilter();
+
+          osc.type = 'square';
+          osc.frequency.value = freq;
+
+          oscFilter.type = 'highpass';
+          oscFilter.frequency.value = 4000;
+
+          oscGain.gain.setValueAtTime(0.1, time);
+          oscGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.5);
+
+          osc.connect(oscFilter);
+          oscFilter.connect(oscGain);
+          oscGain.connect(audioCtx.destination);
+          osc.start(time);
+          osc.stop(time + 0.5);
+        });
+      }
+      else if (type === 'ride') {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(3200, time);
+        osc.frequency.exponentialRampToValueAtTime(2800, time + 0.4);
+
+        gain.gain.setValueAtTime(0.2, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.4);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(time);
+        osc.stop(time + 0.4);
+      }
+    }
+
+    // --- スケジューラー ---
+    function scheduler() {
+      while (nextNoteTime < audioCtx.currentTime + 0.1) {
+        scheduleNote(currentMeasureIdx, currentStepIdx, nextNoteTime);
+        advanceStep();
+      }
+      timerID = setTimeout(scheduler, 25);
+    }
+
+    function scheduleNote(mIdx, sIdx, time) {
+      const measure = song[mIdx];
+      const pattern = measure.drumPattern;
+      const isAccent = (sIdx === 0);
+
+      if (!measure.clickMute && pattern.click[sIdx]) {
+        playSound('click', time, isAccent);
+      }
+
+      TRACK_KEYS.forEach(track => {
+        if (track !== 'click' && pattern[track][sIdx]) {
+          playSound(track, time);
+        }
+      });
+
+      requestAnimationFrame(() => updateUI(mIdx, sIdx));
+    }
+
+    function advanceStep() {
+      const currentMeasure = song[currentMeasureIdx];
+      const secondsPerQuarterNote = 60.0 / currentMeasure.bpm;
+      const secondsPerBeat = secondsPerQuarterNote * (4 / currentMeasure.subBeat);
+      const secondsPerStep = secondsPerBeat / currentMeasure.subdivision;
+
+      nextNoteTime += secondsPerStep;
+      currentStepIdx++;
+
+      const totalSteps = currentMeasure.beats * currentMeasure.subdivision;
+      if (currentStepIdx >= totalSteps) {
+        currentStepIdx = 0;
+        currentMeasureIdx = (currentMeasureIdx + 1) % song.length;
+      }
+    }
+
+    // --- 画面描画 ---
+    function render() {
+      const container = document.getElementById('measuresContainer');
+      container.innerHTML = '';
+
+      const trackLabels = {
+        click: 'CLICK (メトロ)',
+        crash: 'CRASH',
+        ride: 'RIDE',
+        hihat: 'HI-HAT',
+        hiTom: 'HI-TOM',
+        midTom: 'MID-TOM',
+        lowTom: 'LOW-TOM',
+        snare: 'SNARE',
+        kick: 'KICK'
+      };
+
+      song.forEach((m, mIdx) => {
+        const block = document.createElement('div');
+        block.className = 'measure-block';
+
+        const header = document.createElement('div');
+        header.className = 'measure-header';
+        header.innerHTML = `
+          <strong>小節 ${mIdx + 1}</strong>
+          <label>BPM: <input type="number" value="${m.bpm}" min="40" max="300" style="width:55px" onchange="updateMeasure(${mIdx}, 'bpm', this.value)"></label>
+          <label>拍子: 
+            <input type="number" value="${m.beats}" min="1" max="32" style="width:40px" onchange="updateMeasure(${mIdx}, 'beats', this.value)"> /
+            <select onchange="updateMeasure(${mIdx}, 'subBeat', this.value)">
+              <option value="4" ${m.subBeat == 4 ? 'selected' : ''}>4</option>
+              <option value="8" ${m.subBeat == 8 ? 'selected' : ''}>8</option>
+            </select>
+          </label>
+          <label>1拍の分割: 
+            <select onchange="updateMeasure(${mIdx}, 'subdivision', this.value)">
+              <option value="1" ${m.subdivision == 1 ? 'selected' : ''}>1分割（等倍）</option>
+              <option value="2" ${m.subdivision == 2 ? 'selected' : ''}>2分割（8分音符相当）</option>
+              <option value="3" ${m.subdivision == 3 ? 'selected' : ''}>3分割（3連符）</option>
+              <option value="4" ${m.subdivision == 4 ? 'selected' : ''}>4分割（16分音符相当）</option>
+            </select>
+          </label>
+          <label>
+            <input type="checkbox" ${m.clickMute ? 'checked' : ''} onchange="updateMeasure(${mIdx}, 'clickMute', this.checked)">
+            メトロノーム消音
+          </label>
+          <button class="btn-danger" onclick="removeMeasure(${mIdx})" style="margin-left:auto;">削除</button>
+        `;
+        block.appendChild(header);
+
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+
+        const totalSteps = m.beats * m.subdivision;
+
+        TRACK_KEYS.forEach(track => {
+          const row = document.createElement('div');
+          row.className = `row row-${track}`;
+          row.innerHTML = `<span class="row-label">${trackLabels[track]}</span>`;
+
+          for (let sIdx = 0; sIdx < totalSteps; sIdx++) {
+            const cell = document.createElement('button');
+            const isBeatStart = (sIdx % m.subdivision === 0);
+            
+            cell.className = `cell ${m.drumPattern[track][sIdx] ? 'active' : ''} ${isBeatStart ? 'beat-start' : ''}`;
+            cell.id = `cell-${mIdx}-${sIdx}-${track}`;
+            cell.onclick = () => {
+              m.drumPattern[track][sIdx] = !m.drumPattern[track][sIdx];
+              cell.classList.toggle('active');
+            };
+            row.appendChild(cell);
+          }
+          grid.appendChild(row);
+        });
+
+        block.appendChild(grid);
+        container.appendChild(block);
+      });
+    }
+
+    function updateUI(mIdx, sIdx) {
+      document.querySelectorAll('.cell').forEach(c => c.classList.remove('current'));
+      TRACK_KEYS.forEach(track => {
+        const el = document.getElementById(`cell-${mIdx}-${sIdx}-${track}`);
+        if (el) el.classList.add('current');
+      });
+    }
+
+    window.updateMeasure = (mIdx, key, val) => {
+      const numVal = parseInt(val);
+      if (key === 'beats' || key === 'subdivision') {
+        song[mIdx][key] = numVal;
+        song[mIdx].drumPattern = createEmptyPattern(song[mIdx].beats, song[mIdx].subdivision);
+      } else if (key === 'bpm' || key === 'subBeat') {
+        song[mIdx][key] = numVal;
+      } else if (key === 'clickMute') {
+        song[mIdx].clickMute = val;
+      }
+      render();
+    };
+
+    window.removeMeasure = (mIdx) => {
+      if (song.length > 1) {
+        song.splice(mIdx, 1);
+        render();
+      }
+    };
+
+    document.getElementById('addMeasureBtn').onclick = () => {
+      const last = song[song.length - 1];
+      const beats = last ? last.beats : 4;
+      const subdivision = last ? last.subdivision : 2;
+      
+      song.push({
+        bpm: last ? last.bpm : 120,
+        beats: beats,
+        subBeat: last ? last.subBeat : 4,
+        subdivision: subdivision,
+        clickMute: false,
+        drumPattern: createEmptyPattern(beats, subdivision)
+      });
+      render();
+    };
+
+    // --- ビット圧縮 & Base64 による極短コード化 ---
+    function numToBase64(num) {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+      let res = "";
+      do {
+        res = chars[num & 63] + res;
+        num = num >> 6;
+      } while (num > 0);
+      return res;
+    }
+
+    function base64ToNum(str) {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+      let num = 0;
+      for (let i = 0; i < str.length; i++) {
+        num = (num << 6) + chars.indexOf(str[i]);
+      }
+      return num;
+    }
+
+    function exportUltraShortCode() {
+      return song.map(m => {
+        const header = `${m.bpm}.${m.beats}.${m.subBeat}.${m.subdivision}.${m.clickMute ? 1 : 0}`;
+        const totalSteps = m.beats * m.subdivision;
+
+        const trackCodes = TRACK_KEYS.map((track, tIdx) => {
+          let bitNum = 0;
+          let hasNote = false;
+          for (let i = 0; i < totalSteps; i++) {
+            if (m.drumPattern[track][i]) {
+              bitNum |= (1 << i);
+              hasNote = true;
+            }
+          }
+          if (!hasNote) return null;
+          return `${tIdx.toString(36)}:${numToBase64(bitNum)}`;
+        }).filter(Boolean).join(';');
+
+        return `${header}~${trackCodes}`;
+      }).join('!');
+    }
+
+    function importUltraShortCode(codeStr) {
+      try {
+        const measures = codeStr.trim().split('!');
+        const newSong = measures.map(mStr => {
+          const [header, trackCodes] = mStr.split('~');
+          const [bpm, beats, subBeat, subdivision, clickMute] = header.split('.').map(Number);
+
+          const pattern = createEmptyPattern(beats, subdivision);
+          pattern.click.fill(false);
+
+          if (trackCodes) {
+            trackCodes.split(';').forEach(tc => {
+              const [tIdxStr, b64] = tc.split(':');
+              const tIdx = parseInt(tIdxStr, 36);
+              const trackKey = TRACK_KEYS[tIdx];
+              const bitNum = base64ToNum(b64);
+              const totalSteps = beats * subdivision;
+
+              if (trackKey && pattern[trackKey]) {
+                for (let i = 0; i < totalSteps; i++) {
+                  pattern[trackKey][i] = Boolean(bitNum & (1 << i));
+                }
+              }
+            });
+          }
+
+          return {
+            bpm: bpm || 120,
+            beats: beats || 4,
+            subBeat: subBeat || 4,
+            subdivision: subdivision || 2,
+            clickMute: Boolean(clickMute),
+            drumPattern: pattern
+          };
+        });
+
+        if (newSong.length > 0) {
+          song = newSong;
+          render();
+          return true;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+      return false;
+    }
+
+    // コード取得・コピー
+    document.getElementById('getShareCodeBtn').onclick = () => {
+      const code = exportUltraShortCode();
+      document.getElementById('importCodeInput').value = code;
+      navigator.clipboard.writeText(code).then(() => {
+        alert(`超短縮コードをコピーしました！\nコード: ${code}`);
+      }).catch(() => {
+        alert('コードのコピーに失敗しました。');
+      });
+    };
+
+    // URL共有
+    document.getElementById('getShareUrlBtn').onclick = () => {
+      const code = exportUltraShortCode();
+      const shareUrl = `${window.location.origin}${window.location.pathname}#c=${code}`;
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        alert('共有用URLをコピーしました！');
+      }).catch(() => {
+        alert('URLのコピーに失敗しました。');
+      });
+    };
+
+    // コード復元
+    document.getElementById('importCodeBtn').onclick = () => {
+      const inputVal = document.getElementById('importCodeInput').value;
+      if (importUltraShortCode(inputVal)) {
+        alert('リズムパターンを読み込みました！');
+      } else {
+        alert('コードの形式が正しくありません。');
+      }
+    };
+
+    // URLハッシュからの自動復元
+    function loadFromUrlHash() {
+      const hash = window.location.hash;
+      if (hash.startsWith('#c=')) {
+        const code = hash.replace('#c=', '');
+        importUltraShortCode(code);
+      }
+    }
+
+    // 再生ボタン
+    document.getElementById('playBtn').onclick = () => {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      isPlaying = !isPlaying;
+
+      if (isPlaying) {
+        currentMeasureIdx = 0;
+        currentStepIdx = 0;
+        nextNoteTime = audioCtx.currentTime;
+        scheduler();
+        document.getElementById('playBtn').innerText = '停止';
+      } else {
+        clearTimeout(timerID);
+        document.getElementById('playBtn').innerText = '再生';
+      }
+    };
+
+    // 初期化
+    loadFromUrlHash();
+    render();
+  </script>
+</body>
+</html>
