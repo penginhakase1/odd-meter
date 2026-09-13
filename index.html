@@ -2,21 +2,110 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>変拍子シーケンサー</title>
   <style>
-    body { font-family: sans-serif; padding: 20px; background: #1a1a1a; color: #fff; }
-    .card { background: #2a2a2a; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
-    .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 15px; }
-    .measure-block { border: 1px solid #444; padding: 12px; border-radius: 6px; margin-bottom: 12px; background: #333; }
-    .measure-header { display: flex; gap: 15px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-    .grid { display: grid; gap: 2px; margin-top: 8px; overflow-x: auto; padding-bottom: 5px; }
-    .row { display: flex; gap: 2px; align-items: center; }
-    .row-label { width: 110px; font-size: 11px; font-weight: bold; flex-shrink: 0; }
+    * {
+      box-sizing: border-box;
+      touch-action: manipulation; /* タップ時のズーム遅延を防止 */
+      -webkit-tap-highlight-color: transparent; /* タップ時の青枠を消す */
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 12px;
+      margin: 0 auto;
+      max-width: 1200px; /* PCでの広がりすぎを防止 */
+      background: #1a1a1a;
+      color: #fff;
+    }
+    h1 {
+      font-size: 1.4rem;
+      margin: 10px 0 15px 0;
+      text-align: center;
+    }
+    .card {
+      background: #2a2a2a;
+      padding: 14px;
+      border-radius: 10px;
+      margin-bottom: 15px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    }
     
-    .cell { width: 26px; height: 30px; background: #444; border: none; cursor: pointer; border-radius: 2px; flex-shrink: 0; }
+    /* コントロールパネルのレスポンシブレイアウト */
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    
+    .measure-block {
+      border: 1px solid #444;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      background: #333;
+    }
+    .measure-header {
+      display: flex;
+      gap: 10px 14px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      font-size: 0.95rem;
+    }
+    
+    /* グリッド部分の横スクロール＆トラック固定表示 */
+    .grid-wrapper {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      border-radius: 6px;
+      background: #262626;
+      padding-bottom: 4px;
+    }
+    .grid {
+      display: inline-block;
+      min-width: 100%;
+    }
+    .row {
+      display: flex;
+      gap: 3px;
+      margin-bottom: 3px;
+      align-items: center;
+    }
+    
+    /* トラックラベル（スマホ・タブレット・PC対応） */
+    .row-label {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      width: 100px;
+      height: 44px;
+      line-height: 44px;
+      padding-left: 8px;
+      font-size: 11px;
+      font-weight: bold;
+      background: #2a2a2a;
+      border-right: 1px solid #444;
+      flex-shrink: 0;
+      box-shadow: 2px 0 5px rgba(0,0,0,0.3);
+    }
+    
+    /* タッチ・マウスクリック両対応のマス目 */
+    .cell {
+      width: 38px;
+      height: 44px;
+      background: #444;
+      border: none;
+      cursor: pointer;
+      border-radius: 4px;
+      flex-shrink: 0;
+      padding: 0;
+      transition: background 0.1s;
+    }
     .cell.active { background: #00adb5; }
-    .cell.current { border: 2px solid #ff414d; }
-    .cell.beat-start { margin-left: 4px; border-left: 2px solid #666; }
+    .cell.current { outline: 2px solid #ff414d; outline-offset: -2px; z-index: 1; }
+    .cell.beat-start { margin-left: 4px; border-left: 3px solid #666; }
 
     /* トラックごとの色分け */
     .row-click .cell.active { background: #f39c12; }
@@ -26,39 +115,108 @@
     .row-snare .cell.active { background: #e74c3c; }
     .row-kick .cell.active { background: #2ecc71; }
     
-    button { cursor: pointer; padding: 6px 12px; border-radius: 4px; border: none; background: #00adb5; color: #fff; }
-    button:hover { background: #00888e; }
+    /* ボタン＆フォーム共通設定 */
+    button {
+      cursor: pointer;
+      padding: 10px 16px;
+      border-radius: 6px;
+      border: none;
+      background: #00adb5;
+      color: #fff;
+      font-weight: bold;
+      font-size: 0.95rem;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    button:hover { opacity: 0.9; }
+    button:active { opacity: 0.75; }
+    
     .btn-secondary { background: #555; }
-    .btn-secondary:hover { background: #666; }
     .btn-danger { background: #ff414d; }
-    .btn-danger:hover { background: #c0392b; }
-    select, input { padding: 5px; background: #444; color: #fff; border: 1px solid #555; border-radius: 4px; }
-    .code-input { width: 220px; font-family: monospace; }
+    
+    select, input {
+      padding: 8px;
+      background: #444;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      min-height: 40px;
+    }
+    .code-input {
+      font-family: monospace;
+      flex: 1;
+      min-width: 140px;
+    }
+    
+    /* 共有エリアのレスポンシブ対応 */
+    .share-group {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .share-buttons {
+      display: flex;
+      gap: 8px;
+      flex: 1;
+      min-width: 240px;
+    }
+    .share-buttons button {
+      flex: 1;
+    }
+    .import-group {
+      display: flex;
+      gap: 6px;
+      flex: 1.5;
+      min-width: 260px;
+    }
+
+    /* --- デバイス別レスポンシブ微調整 (Media Queries) --- */
+    /* スマホ画面 (幅600px未満) */
+    @media (max-width: 600px) {
+      body { padding: 8px; }
+      h1 { font-size: 1.1rem; }
+      .row-label { width: 85px; font-size: 10px; }
+      .cell { width: 34px; height: 44px; }
+      .share-group { flex-direction: column; }
+      .share-buttons, .import-group { width: 100%; }
+    }
+    /* パソコン画面 (幅900px以上) */
+    @media (min-width: 900px) {
+      .cell { width: 42px; }
+      .row-label { width: 120px; font-size: 12px; }
+    }
   </style>
 </head>
 <body>
 
   <h1>変拍子 & サブディビジョンシーケンサー</h1>
 
+  <!-- メイン操作パネル -->
   <div class="card controls">
-    <button id="playBtn" style="font-size: 1.1em; padding: 8px 20px;">再生</button>
-    <label>メトロノーム音色: 
+    <button id="playBtn" style="font-size: 1.1em; padding: 10px 24px;">▶ 再生</button>
+    <label>メトロノーム: 
       <select id="clickSound">
-        <option value="digital">デジタル（高音ビープ）</option>
-        <option value="wood">ウッド（木魚・クラベス風）</option>
+        <option value="digital">デジタル（高音）</option>
+        <option value="wood">ウッド（木魚風）</option>
       </select>
     </label>
-    <button id="addMeasureBtn">+ 小節を追加</button>
+    <button id="addMeasureBtn" class="btn-secondary">+ 小節を追加</button>
   </div>
 
-  <!-- 極短コード共有操作カード -->
+  <!-- 共有・コード操作カード -->
   <div class="card">
-    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-      <button id="getShareCodeBtn">📋 共有コードを発行・コピー</button>
-      <button id="getShareUrlBtn" class="btn-secondary">🔗 共有URLをコピー</button>
-      <div style="margin-left: auto; display: flex; gap: 6px;">
+    <div class="share-group">
+      <div class="share-buttons">
+        <button id="getShareCodeBtn">📋 コード保存</button>
+        <button id="getShareUrlBtn" class="btn-secondary">🔗 URL共有</button>
+      </div>
+      <div class="import-group">
         <input type="text" id="importCodeInput" class="code-input" placeholder="短縮コードを貼り付け">
-        <button id="importCodeBtn" class="btn-secondary">復元</button>
+        <button id="importCodeBtn" class="btn-secondary" style="flex-shrink: 0;">復元</button>
       </div>
     </div>
   </div>
@@ -97,7 +255,7 @@
       return pattern;
     }
 
-    // --- 音色合成 ---
+    // --- 音色合成（リアルクラッシュシンバル含む） ---
     function playSound(type, time, isAccent = false) {
       if (type === 'click') {
         const soundType = document.getElementById('clickSound').value;
@@ -199,13 +357,10 @@
         osc.stop(time + 0.2);
       }
       else if (type === 'crash') {
-        // --- リアルなクラッシュシンバル処理 ---
         const bufferSize = audioCtx.sampleRate * 1.2;
         const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
         const output = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          output[i] = Math.random() * 2 - 1;
-        }
+        for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
 
         const noise = audioCtx.createBufferSource();
         noise.buffer = buffer;
@@ -311,7 +466,7 @@
       container.innerHTML = '';
 
       const trackLabels = {
-        click: 'CLICK (メトロ)',
+        click: 'CLICK',
         crash: 'CRASH',
         ride: 'RIDE',
         hihat: 'HI-HAT',
@@ -331,28 +486,30 @@
         header.innerHTML = `
           <strong>小節 ${mIdx + 1}</strong>
           <label>BPM: <input type="number" value="${m.bpm}" min="40" max="300" style="width:55px" onchange="updateMeasure(${mIdx}, 'bpm', this.value)"></label>
-          <label>拍子: 
+          <label>拍: 
             <input type="number" value="${m.beats}" min="1" max="32" style="width:40px" onchange="updateMeasure(${mIdx}, 'beats', this.value)"> /
             <select onchange="updateMeasure(${mIdx}, 'subBeat', this.value)">
               <option value="4" ${m.subBeat == 4 ? 'selected' : ''}>4</option>
               <option value="8" ${m.subBeat == 8 ? 'selected' : ''}>8</option>
             </select>
           </label>
-          <label>1拍の分割: 
+          <label>分割: 
             <select onchange="updateMeasure(${mIdx}, 'subdivision', this.value)">
-              <option value="1" ${m.subdivision == 1 ? 'selected' : ''}>1分割（等倍）</option>
-              <option value="2" ${m.subdivision == 2 ? 'selected' : ''}>2分割（8分音符相当）</option>
-              <option value="3" ${m.subdivision == 3 ? 'selected' : ''}>3分割（3連符）</option>
-              <option value="4" ${m.subdivision == 4 ? 'selected' : ''}>4分割（16分音符相当）</option>
+              <option value="1" ${m.subdivision == 1 ? 'selected' : ''}>1</option>
+              <option value="2" ${m.subdivision == 2 ? 'selected' : ''}>2(8分)</option>
+              <option value="3" ${m.subdivision == 3 ? 'selected' : ''}>3(3連)</option>
+              <option value="4" ${m.subdivision == 4 ? 'selected' : ''}>4(16分)</option>
             </select>
           </label>
-          <label>
-            <input type="checkbox" ${m.clickMute ? 'checked' : ''} onchange="updateMeasure(${mIdx}, 'clickMute', this.checked)">
-            メトロノーム消音
+          <label style="margin-left:auto;">
+            <input type="checkbox" ${m.clickMute ? 'checked' : ''} onchange="updateMeasure(${mIdx}, 'clickMute', this.checked)"> 消音
           </label>
-          <button class="btn-danger" onclick="removeMeasure(${mIdx})" style="margin-left:auto;">削除</button>
+          <button class="btn-danger" onclick="removeMeasure(${mIdx})" style="padding:4px 10px; min-height:34px; font-size:0.85rem;">削除</button>
         `;
         block.appendChild(header);
+
+        const gridWrapper = document.createElement('div');
+        gridWrapper.className = 'grid-wrapper';
 
         const grid = document.createElement('div');
         grid.className = 'grid';
@@ -379,7 +536,8 @@
           grid.appendChild(row);
         });
 
-        block.appendChild(grid);
+        gridWrapper.appendChild(grid);
+        block.appendChild(gridWrapper);
         container.appendChild(block);
       });
     }
@@ -428,7 +586,7 @@
       render();
     };
 
-    // --- ビット圧縮 & Base64 による極短コード化 ---
+    // --- ビット圧縮 & Base64 極短コード機能 ---
     function numToBase64(num) {
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
       let res = "";
@@ -517,39 +675,31 @@
       return false;
     }
 
-    // コード取得・コピー
     document.getElementById('getShareCodeBtn').onclick = () => {
       const code = exportUltraShortCode();
       document.getElementById('importCodeInput').value = code;
       navigator.clipboard.writeText(code).then(() => {
-        alert(`超短縮コードをコピーしました！\nコード: ${code}`);
-      }).catch(() => {
-        alert('コードのコピーに失敗しました。');
-      });
+        alert(`短縮コードをコピーしました！`);
+      }).catch(() => alert('コピーに失敗しました。'));
     };
 
-    // URL共有
     document.getElementById('getShareUrlBtn').onclick = () => {
       const code = exportUltraShortCode();
       const shareUrl = `${window.location.origin}${window.location.pathname}#c=${code}`;
       navigator.clipboard.writeText(shareUrl).then(() => {
         alert('共有用URLをコピーしました！');
-      }).catch(() => {
-        alert('URLのコピーに失敗しました。');
-      });
+      }).catch(() => alert('コピーに失敗しました。'));
     };
 
-    // コード復元
     document.getElementById('importCodeBtn').onclick = () => {
       const inputVal = document.getElementById('importCodeInput').value;
       if (importUltraShortCode(inputVal)) {
-        alert('リズムパターンを読み込みました！');
+        alert('読み込み成功！');
       } else {
-        alert('コードの形式が正しくありません。');
+        alert('コードの形式が不正です。');
       }
     };
 
-    // URLハッシュからの自動復元
     function loadFromUrlHash() {
       const hash = window.location.hash;
       if (hash.startsWith('#c=')) {
@@ -568,10 +718,10 @@
         currentStepIdx = 0;
         nextNoteTime = audioCtx.currentTime;
         scheduler();
-        document.getElementById('playBtn').innerText = '停止';
+        document.getElementById('playBtn').innerText = '■ 停止';
       } else {
         clearTimeout(timerID);
-        document.getElementById('playBtn').innerText = '再生';
+        document.getElementById('playBtn').innerText = '▶ 再生';
       }
     };
 
